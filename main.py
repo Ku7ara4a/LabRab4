@@ -46,24 +46,27 @@ user_regions = load_users()
 
 def get_user_region(user_id, username):
     """Получает регион пользователя (по умолчанию Россия)"""
-    if user_id not in user_regions:
+    if str(user_id) not in user_regions:
         # Создаем запись для нового пользователя
-        user_regions[user_id] = {
+        user_regions[str(user_id)] = {
             'username': username,
             'region': 'RU'
         }
         save_users()
-    return user_regions[user_id]['region']
+    # Обновляем username, если он изменился
+    elif user_regions[str(user_id)]['username'] != username:
+        user_regions[str(user_id)]['username'] = username
+        save_users()
+    return user_regions[str(user_id)]['region']
 
 
 def set_user_region(user_id, username, region_code):
     """Устанавливает регион пользователя и сохраняет в JSON"""
-    user_regions[user_id] = {
+    user_regions[str(user_id)] = {
         'username': username,
         'region': region_code
     }
     save_users()
-
 
 # Определяем состояния
 class GameStates(StatesGroup):
