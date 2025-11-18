@@ -2,51 +2,178 @@ import telebot
 from telebot import types
 from telebot.handler_backends import State, StatesGroup
 from telebot.custom_filters import StateFilter
-
+import json
+import os
 
 from logger import logger
 from SteamAPI import SteamAPI
 
-#Token.txt - файл с одним токеном, добавлен в gitignore
-with open('Token.txt','r') as f:
+# Token.txt - файл с одним токеном, добавлен в gitignore
+with open('Token.txt', 'r') as f:
     TOKEN = f.read()
 
 bot = telebot.TeleBot(TOKEN)
 steam_api = SteamAPI()
 
-
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-
-    logger.info(f"Пользователь {message.from_user.username} запустил бота")
-
-    welcome_message = """
-    Привет! Я GameChecker!\nЯ помогу тебе узнать о компьютерных играх.
-    """
-    bot.reply_to(message, welcome_message)
+# Файл для хранения данных пользователей
+USERS_FILE = 'users.json'
 
 
-@bot.message_handler(commands=['help'])
-def send_help(message):
+# Загрузка пользователей из JSON
+def load_users():
+    if os.path.exists(USERS_FILE):
+        try:
+            with open(USERS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Error loading users: {e}")
+            return {}
+    return {}
 
-    user = message.from_user
-    logger.info(f"Пользователь {user.first_name} запросил помощь")
 
-    help_message = """
-    Список доступных команд:
-    /start - начало работы с ботом
-    /search - найти игру по названию🔍
-    /help - получить список доступных команд
-    """
-    bot.reply_to(message, help_message)
+# Сохранение пользователей в JSON
+def save_users():
+    try:
+        with open(USERS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(user_regions, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"Error saving users: {e}")
+
+
+# Хранилище регионов пользователей
+user_regions = load_users()
+
+
+def get_user_region(user_id, username):
+    """Получает регион пользователя (по умолчанию Россия)"""
+    if user_id not in user_regions:
+        # Создаем запись для нового пользователя
+        user_regions[user_id] = {
+            'username': username,
+            'region': 'RU'
+        }
+        save_users()
+    return user_regions[user_id]['region']
+
+
+def set_user_region(user_id, username, region_code):
+    """Устанавливает регион пользователя и сохраняет в JSON"""
+    user_regions[user_id] = {
+        'username': username,
+        'region': region_code
+    }
+    save_users()
+
 
 # Определяем состояния
 class GameStates(StatesGroup):
     waiting_for_game_name = State()
+    waiting_for_region = State()
 
 
 # Регистрируем фильтр состояний
 bot.add_custom_filter(StateFilter(bot))
+
+
+def get_region_keyboard():
+    """Клавиатура для выбора региона"""
+    markup = types.InlineKeyboardMarkup(row_width=2)
+
+    regions = [
+        ("Россия", "RU"),
+        ("США", "US"),
+        ("Европа", "EU"),
+        ("Казахстан", "KZ"),
+        ("Турция", "TR"),
+        ("Аргентина", "AR"),
+        ("Бразилия", "BR")
+    ]
+
+    buttons = []
+    for region_name, region_code in regions:
+        buttons.append(types.InlineKeyboardButton(region_name, callback_data=f"set_region:{region_code}"))
+
+    # Распределяем кнопки по 2 в ряд
+    for i in range(0, len(buttons), 2):
+        if i + 1 < len(buttons):
+            markup.add(buttons[i], buttons[i + 1])
+        else:
+            markup.add(buttons[i])
+
+    return markup
+
+
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    user = message.from_user
+    logger.info(f"Пользователь {user.username} (ID: {user.id}) запустил бота")
+
+    # Получаем или создаем запись пользователя
+    user_region = get_user_region(user.id, user.username)
+
+    welcome_message = f"""
+    Привет, {user.first_name}! Я GameChecker!
+    Я помогу тебе узнать о компьютерных играх.
+
+    📍 *Текущий регион: {user_region}*
+
+    Выберите ваш регион для начала работы:
+    """
+
+    bot.send_message(
+        message.chat.id,
+        welcome_message,
+        parse_mode='Markdown',
+        reply_markup=get_region_keyboard()
+    )
+
+
+@bot.message_handler(commands=['region'])
+def change_region(message):
+    """Смена региона"""
+    user = message.from_user
+    current_region = get_user_region(user.id, user.username)
+
+    warning_text = f"""
+⚠️ *Внимание! Выбор региона влияет на:*
+• Доступность игр в вашем регионе
+• Цены и валюту отображения
+• Результаты поиска
+
+*Текущий регион: {current_region}*
+
+Выберите новый регион:
+    """
+
+    bot.send_message(
+        message.chat.id,
+        warning_text,
+        parse_mode='Markdown',
+        reply_markup=get_region_keyboard()
+    )
+
+
+@bot.message_handler(commands=['help'])
+def send_help(message):
+    user = message.from_user
+    current_region = get_user_region(user.id, user.username)
+
+    logger.info(f"Пользователь {user.username} запросил помощь")
+
+    help_message = f"""
+📋 *Список доступных команд:*
+
+/start - начало работы с ботом
+/search - найти игру по названию 🔍
+/region - сменить регион (текущий: {current_region}) 🌍
+/help - получить список доступных команд
+
+*Информация о пользователе:*
+👤 Username: @{user.username}
+🌍 Регион: {current_region}
+🆔 ID: {user.id}
+    """
+    bot.reply_to(message, help_message, parse_mode='Markdown')
 
 
 def send_search_prompt(chat_id, text):
@@ -65,13 +192,11 @@ def send_search_prompt(chat_id, text):
 @bot.message_handler(commands=['search'])
 def handle_search_ultimate(message):
     """Поиск с поддержкой альтернативных названий"""
-    bot.set_state(message.from_user.id, GameStates.waiting_for_game_name, message.chat.id)
-
     user = message.from_user
-    logger.info(f"Пользователь {user.first_name} начал поиск")
+    user_region = get_user_region(user.id, user.username)
 
-    search_text = """
-🔍 *Умный поиск игр*
+    search_text = f"""
+🔍 *Поиск игр* (Регион: {user_region})
 
 Введите название игры на *русском* или *английском*:
 
@@ -92,6 +217,9 @@ def handle_search_ultimate(message):
 Бот сам подберет правильное название! 🎯
     """
 
+    bot.set_state(user.id, GameStates.waiting_for_game_name, message.chat.id)
+    logger.info(f"Пользователь {user.username} начал поиск в регионе {user_region}")
+
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("❌ Отменить поиск", callback_data="cancel_search"))
 
@@ -104,46 +232,53 @@ def handle_game_name_advanced(message):
     """Продвинутый поиск с обработкой альтернативных названий"""
     try:
         game_name = message.text.strip()
+        user = message.from_user
+        user_region = get_user_region(user.id, user.username)
 
         if len(game_name) < 2:
             send_search_prompt(message.chat.id, "❌ Минимум 2 символа. Попробуйте еще раз:")
             return
 
-        search_msg = bot.send_message(message.chat.id, f"🔍 Ищу *{game_name}*...", parse_mode='Markdown')
+        search_msg = bot.send_message(message.chat.id, f"🔍 Ищу *{game_name}* в регионе {user_region}...",
+                                      parse_mode='Markdown')
 
-        # Умный поиск
-        games = steam_api.smart_game_search(game_name)
+        # Умный поиск с учетом региона
+        games = steam_api.smart_game_search(game_name, user_region)
 
         if not games:
-            #Если поиск не удался, предлагаем варианты
-            suggestions = steam_api.get_search_suggestions(game_name)
+            # Если поиск не удался, проверяем возможную причину региона
+            region_issue_msg = steam_api.get_region_issue_message(user_region)
+
             bot.delete_message(message.chat.id, search_msg.message_id)
 
             suggestion_text = f"""
-❌ *{game_name}* не найдена.
+❌ *{game_name}* не найдена в регионе {user_region}.
 
-{suggestions}
+{region_issue_msg}
 
-*Попробуйте ввести другое название:*
+*Попробуйте:*
+• Ввести другое название
+• Сменить регион командой /region
+• Использовать английское название
             """
             send_search_prompt(message.chat.id, suggestion_text)
             return
 
         # Если найдено несколько вариантов - показываем выбор
         if len(games) > 1:
-            show_game_options(message.chat.id, games, search_msg.message_id)
+            show_game_options(message.chat.id, games, search_msg.message_id, user_region)
             return
 
         # Один результат - показываем сразу
-        bot.delete_state(message.from_user.id, message.chat.id)
-        process_found_game(games[0], message.chat.id, search_msg.message_id)
+        bot.delete_state(user.id, message.chat.id)
+        process_found_game(games[0], message.chat.id, search_msg.message_id, user_region)
 
     except Exception as e:
         logger.error(f"Advanced search error: {e}")
         send_search_prompt(message.chat.id, "❌ Ошибка поиска. Попробуйте еще раз:")
 
 
-def show_game_options(chat_id, games, search_msg_id):
+def show_game_options(chat_id, games, search_msg_id, user_region):
     """Показывает варианты найденных игр для выбора"""
     markup = types.InlineKeyboardMarkup()
 
@@ -157,14 +292,14 @@ def show_game_options(chat_id, games, search_msg_id):
 
         markup.add(types.InlineKeyboardButton(
             f"🎮 {display_name}",
-            callback_data=f"select_game:{game['id']}"
+            callback_data=f"select_game:{game['id']}:{user_region}"
         ))
 
     markup.add(types.InlineKeyboardButton("❌ Отменить", callback_data="cancel_search"))
 
     bot.edit_message_text(
-        "🎯 *Найдено несколько игр:*\n "
-        "(Если игры нет в списке попробуйте написать название на английском)\n "
+        f"🎯 *Найдено несколько игр в регионе {user_region}:*\n"
+        "(Если игры нет в списке попробуйте написать название на английском)\n"
         "Выберите нужную игру:",
         chat_id=chat_id,
         message_id=search_msg_id,
@@ -177,7 +312,10 @@ def show_game_options(chat_id, games, search_msg_id):
 def handle_game_selection(call):
     """Обработчик выбора игры из списка"""
     try:
-        game_id = int(call.data.split(':')[1])
+        parts = call.data.split(':')
+        game_id = int(parts[1])
+        user_region = parts[2] if len(parts) > 2 else "RU"
+
         bot.delete_state(call.from_user.id, call.message.chat.id)
 
         # Показываем загрузку
@@ -187,11 +325,11 @@ def handle_game_selection(call):
             message_id=call.message.message_id
         )
 
-        # Получаем детали игры
-        game_details = steam_api.get_game_details(game_id)
+        # Получаем детали игры с учетом региона
+        game_details = steam_api.get_game_details(game_id, user_region)
 
         if game_details:
-            game_info = steam_api.format_game_info(game_details)
+            game_info = steam_api.format_game_info(game_details, user_region)
             header_image = game_details.get('header_image')
 
             if header_image:
@@ -205,8 +343,10 @@ def handle_game_selection(call):
                 bot.edit_message_text(game_info, chat_id=call.message.chat.id,
                                       message_id=call.message.message_id, parse_mode='Markdown')
         else:
+            region_issue_msg = steam_api.get_region_issue_message(user_region)
+            error_text = f"❌ Ошибка загрузки информации об игре\n\n{region_issue_msg}"
             bot.edit_message_text(
-                "❌ Ошибка загрузки информации об игре",
+                error_text,
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id
             )
@@ -216,23 +356,30 @@ def handle_game_selection(call):
         bot.answer_callback_query(call.id, "❌ Ошибка загрузки")
 
 
-def process_found_game(game_data, chat_id, search_msg_id):
+def process_found_game(game_data, chat_id, search_msg_id, user_region):
     """Обрабатывает найденную игру"""
     game_id = game_data['id']
-    game_details = steam_api.get_game_details(game_id)
+    game_details = steam_api.get_game_details(game_id, user_region)
 
     if not game_details:
         # Ошибка загрузки - возвращаем в состояние поиска
         bot.set_state(chat_id, GameStates.waiting_for_game_name, chat_id)
-        send_search_prompt(
-            chat_id,
-            f"❌ Не удалось загрузить информацию об игре *{game_data['name']}*\n\nПопробуйте другое название:"
-        )
+        region_issue_msg = steam_api.get_region_issue_message(user_region)
+
+        error_text = f"""
+❌ Не удалось загрузить информацию об игре *{game_data['name']}* в регионе {user_region}
+
+{region_issue_msg}
+
+Попробуйте другое название или смените регион:
+        """
+
+        send_search_prompt(chat_id, error_text)
         bot.delete_message(chat_id, search_msg_id)
         return
 
     # Успешный поиск - показываем результат
-    game_info = steam_api.format_game_info(game_details)
+    game_info = steam_api.format_game_info(game_details, user_region)
     header_image = game_details.get('header_image')
 
     if header_image:
@@ -245,6 +392,48 @@ def process_found_game(game_data, chat_id, search_msg_id):
     else:
         bot.edit_message_text(game_info, chat_id=chat_id,
                               message_id=search_msg_id, parse_mode='Markdown')
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('set_region:'))
+def handle_set_region(call):
+    """Обработчик установки региона"""
+    region_code = call.data.split(':')[1]
+    user = call.from_user
+
+    # Сохраняем регион пользователя
+    set_user_region(user.id, user.username, region_code)
+
+    region_names = {
+        'RU': 'Россия',
+        'US': 'США',
+        'EU': 'Европа',
+        'KZ': 'Казахстан',
+        'TR': 'Турция',
+        'AR': 'Аргентина',
+        'BR': 'Бразилия'
+    }
+
+    region_name = region_names.get(region_code, region_code)
+
+    success_text = f"""
+✅ Регион успешно изменен на *{region_name}*
+
+⚠️ *Влияние на поиск:*
+• Цены будут отображаться в местной валюте
+• Некоторые игры могут быть недоступны в вашем регионе
+• Результаты поиска зависят от региональных ограничений
+
+Используйте /search для поиска игр
+    """
+
+    bot.edit_message_text(
+        success_text,
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        parse_mode='Markdown'
+    )
+
+    logger.info(f"Пользователь {user.username} установил регион {region_code}")
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "cancel_search")
@@ -262,5 +451,10 @@ def handle_cancel_search(call):
         logger.error(f"Cancel error: {e}")
         bot.answer_callback_query(call.id, "Ошибка отмены")
 
+
+# Сохраняем пользователей при завершении работы
+import atexit
+
+atexit.register(save_users)
 
 bot.polling(none_stop=True)

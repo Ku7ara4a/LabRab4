@@ -3,12 +3,12 @@ import json
 
 from logger import logger
 
+
 # Класс для работы с Steam API
 class SteamAPI:
     def __init__(self):
         self.base_url = "https://store.steampowered.com/api"
         self.game_aliases = {
-            # Русские названия
             'ведьмак': 'The Witcher',
             'витчер': 'The Witcher',
             'киберпанк': 'Cyberpunk',
@@ -22,7 +22,6 @@ class SteamAPI:
             'кс2': 'Counter-Strike 2',
             'дота': 'Dota',
             'дота 2': 'Dota 2',
-            'майнкрафт': 'Minecraft',
             'скайрим': 'Skyrim',
             'фоллаут': 'Fallout',
             'ассасин': 'Assassin',
@@ -41,35 +40,52 @@ class SteamAPI:
             'ac': 'Assassin',
         }
 
-    def search_game(self, game_name):
-        """Обычный поиск игры в Steam"""
+        # Настройки регионов (убрана Украина)
+        self.region_settings = {
+            'RU': {'cc': 'ru', 'l': 'russian', 'currency': 'RUB'},
+            'US': {'cc': 'us', 'l': 'english', 'currency': 'USD'},
+            'EU': {'cc': 'de', 'l': 'english', 'currency': 'EUR'},
+            'KZ': {'cc': 'kz', 'l': 'russian', 'currency': 'KZT'},
+            'TR': {'cc': 'tr', 'l': 'turkish', 'currency': 'TRY'},
+            'AR': {'cc': 'ar', 'l': 'spanish', 'currency': 'ARS'},
+            'BR': {'cc': 'br', 'l': 'portuguese', 'currency': 'BRL'}
+        }
+
+    def get_region_params(self, region_code):
+        """Получает параметры для региона"""
+        return self.region_settings.get(region_code, self.region_settings['RU'])
+
+    def search_game(self, game_name, region_code='RU'):
+        """Обычный поиск игры в Steam с учетом региона"""
         try:
             url = f"{self.base_url}/storesearch"
+            region_params = self.get_region_params(region_code)
+
             params = {
                 'term': game_name,
-                'l': 'russian',
-                'cc': 'ru',
+                'l': region_params['l'],
+                'cc': region_params['cc'],
                 'limit': 5
             }
 
-            logger.info(f'Поиск игры: {game_name}')
+            logger.info(f'Поиск игры: {game_name} в регионе {region_code}')
 
             response = requests.get(url, params=params, timeout=10)
             response.raise_for_status()
             data = response.json()
 
-            if data['items']:
+            if data.get('items'):
                 return data['items']
             return None
 
         except Exception as e:
-            logger.error(f"Steam search error: {e}")
+            logger.error(f"Steam search error in region {region_code}: {e}")
             return None
 
-    def smart_game_search(self, game_name):
-        """Умный поиск игры с обработкой альтернативных названий"""
+    def smart_game_search(self, game_name, region_code='RU'):
+        """Умный поиск игры с обработкой альтернативных названий и учетом региона"""
         # Сначала пробуем прямой поиск
-        games = self.search_game(game_name)
+        games = self.search_game(game_name, region_code)
 
         if games:
             return games
@@ -78,7 +94,7 @@ class SteamAPI:
         alternative_names = self.get_alternative_names(game_name)
 
         for alt_name in alternative_names:
-            games = self.search_game(alt_name)
+            games = self.search_game(alt_name, region_code)
             if games:
                 return games
 
@@ -124,43 +140,61 @@ class SteamAPI:
         # Общие советы
         return "💡 *Советы:*\n• Используйте английское название\n• Проверьте правильность написания\n• Попробуйте сокращенное название"
 
-    def get_game_details(self, game_id):
-        """Получение детальной информации об игре"""
+    def get_region_issue_message(self, region_code):
+        """Возвращает сообщение о возможных проблемах с регионом"""
+        region_messages = {
+            'RU': "⚠️ В России могут быть ограничения на некоторые игры",
+            'TR': "⚠️ В Турции могут быть региональные ограничения",
+            'AR': "⚠️ В Аргентине могут быть региональные ограничения",
+        }
+
+        return region_messages.get(region_code,
+                                   "⚠️ В вашем регионе могут быть ограничения на некоторые игры")
+
+    def get_game_details(self, game_id, region_code='RU'):
+        """Получение детальной информации об игре с учетом региона"""
         try:
             url = f"{self.base_url}/appdetails"
+            region_params = self.get_region_params(region_code)
+
             params = {
                 'appids': game_id,
-                'l': 'russian',
-                #ПРИМЕЧАНИЕ!!!
-                #МОЖНО УКАЗАТЬ КОД СТРАНЫ НО ЕСЛИ ИГРЫ НЕТ В МАГАЗИНЕ СТРАНЫ СТИМА, ТО ОН НЕ СМОЖЕТ ЗАГРУЗИТЬ
+                'l': region_params['l'],
+                'cc': region_params['cc'],
+                'currency': region_params['currency']
             }
 
-            logger.info(f'Запрос подробностей об {game_id}')
+            logger.info(f'Запрос подробностей об {game_id} для региона {region_code}')
 
             response = requests.get(url, params=params, timeout=10)
             response.raise_for_status()
             data = response.json()
 
-            if str(game_id) in data and data[str(game_id)]['success']:
-                return data[str(game_id)]['data']
-            return None
+            if str(game_id) in data and data[str(game_id)].get('success'):
+                game_data = data[str(game_id)]['data']
+                # Добавляем ID игры в данные для удобства
+                game_data['id'] = game_id
+                return game_data
+            else:
+                logger.warning(f"Игра {game_id} не найдена или недоступна в регионе {region_code}")
+                return None
 
         except Exception as e:
-            logger.error(f"Steam details error: {e}")
+            logger.error(f"Steam details error for {game_id} in region {region_code}: {e}")
             return None
 
-    def format_game_info(self, game_data):
-        """Форматирование информации об игре для Telegram"""
+    def format_game_info(self, game_data, region_code='RU'):
+        """Форматирование информации об игре для Telegram с учетом региона"""
         try:
             # Основная информация
             name = game_data.get('name', 'Неизвестно')
             price_info = game_data.get('price_overview', {})
 
-            logger.info(f"Формирование информации об: {name}")
+            logger.info(f"Формирование информации об: {name} для региона {region_code}")
 
             # Обработка цены
             if price_info:
-                price = f"Стоимость {price_info.get('final_formatted', 'Бесплатно')}"
+                price = f"💰 {price_info.get('final_formatted', 'Бесплатно')}"
                 if price_info.get('discount_percent', 0) > 0:
                     price += f" (скидка {price_info['discount_percent']}% 🔥)"
             else:
@@ -171,7 +205,7 @@ class SteamAPI:
             if release_date.get('coming_soon'):
                 release_info = "🕐 Скоро выйдет"
             else:
-                release_info = f"Дата выхода: {release_date.get('date', 'Неизвестно')}"
+                release_info = f"📅 {release_date.get('date', 'Неизвестно')}"
 
             # Разработчики и издатели
             developers = ", ".join(game_data.get('developers', [])) or "Неизвестно"
@@ -183,12 +217,15 @@ class SteamAPI:
 
             # Рейтинги
             metacritic = game_data.get('metacritic', {})
-            metacritic_score = f"Оценка ⭐️ {metacritic.get('score', 'N/A')}" if metacritic else "Оценка метакритик не указана"
+            metacritic_score = f"⭐️ {metacritic.get('score', 'N/A')}" if metacritic else "Оценка не указана"
 
             # Описание (обрезаем если слишком длинное)
             description = game_data.get('short_description', 'Описание отсутствует')
             if len(description) > 400:
                 description = description[:400] + "..."
+
+            # Информация о регионе
+            region_info = f"🌍 Регион: {region_code}"
 
             # Формируем сообщение
             message = f"""
@@ -197,6 +234,7 @@ class SteamAPI:
 {price}
 {release_info}
 {metacritic_score}
+{region_info}
 
 *Разработчик:* {developers}
 *Издатель:* {publishers}
