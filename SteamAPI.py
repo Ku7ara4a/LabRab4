@@ -40,15 +40,15 @@ class SteamAPI:
             'ac': 'Assassin',
         }
 
-        # Настройки регионов (убрана Украина)
+        # Настройки регионов
         self.region_settings = {
             'RU': {'cc': 'ru', 'l': 'russian', 'currency': 'RUB'},
-            'US': {'cc': 'us', 'l': 'english', 'currency': 'USD'},
-            'EU': {'cc': 'de', 'l': 'english', 'currency': 'EUR'},
+            'US': {'cc': 'us', 'l': 'russian', 'currency': 'USD'},
+            'EU': {'cc': 'de', 'l': 'russian', 'currency': 'EUR'},
             'KZ': {'cc': 'kz', 'l': 'russian', 'currency': 'KZT'},
-            'TR': {'cc': 'tr', 'l': 'turkish', 'currency': 'TRY'},
-            'AR': {'cc': 'ar', 'l': 'spanish', 'currency': 'ARS'},
-            'BR': {'cc': 'br', 'l': 'portuguese', 'currency': 'BRL'}
+            'TR': {'cc': 'tr', 'l': 'russian', 'currency': 'TRY'},
+            'AR': {'cc': 'ar', 'l': 'russian', 'currency': 'ARS'},
+            'BR': {'cc': 'br', 'l': 'russian', 'currency': 'BRL'}
         }
 
     def get_region_params(self, region_code):
