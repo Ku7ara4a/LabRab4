@@ -5,6 +5,13 @@ from telebot.custom_filters import StateFilter
 import json
 import os
 
+from DataSetAnalys import (create_genre_analysis,
+                           load_data_set,
+                           create_top_games_plot,
+                           get_basic_stats,
+                           create_playtime_distribution,
+                           test_playtime_achievements_correlation,
+                           test_playtime_is_assymetryc)
 from logger import logger
 from SteamAPI import SteamAPI
 
@@ -18,6 +25,8 @@ steam_api = SteamAPI()
 # Файл для хранения данных пользователей
 USERS_FILE = 'users.json'
 
+df = load_data_set()
+stats = get_basic_stats(df)
 
 # Загрузка пользователей из JSON
 def load_users():
@@ -454,6 +463,87 @@ def handle_cancel_search(call):
         logger.error(f"Cancel error: {e}")
         bot.answer_callback_query(call.id, "Ошибка отмены")
 
+@bot.message_handler(commands=['top_games'])
+def send_top_games(message):
+    try:
+        bot.send_message(message.chat.id, "Создаю График...")
+        plot_buffer = create_top_games_plot(df)
+        logger.info(f"Пользователь {message.from_user.username} запросил топ игр среди друзей")
+        bot.send_photo(message.chat.id, plot_buffer, caption=f"Всего игр : {stats['total_games']}"
+                                                             f" Игроков : {stats['total_players']}")
+    except Exception as e:
+        logger.error(f"Ошибка отправления графика: {e}")
+        bot.send_message(message.chat.id, f"Ошибка при создании графика: {e}")
+
+@bot.message_handler(commands=['playtime'])
+def senf_playtime_stats(message):
+    try:
+        bot.send_message(message.chat.id, "Анализирую время игры...")
+        plot_buffer = create_playtime_distribution(df)
+        logger.info(f"Пользователь {message.from_user.username} запросил время игры")
+        caption = f'Макс: {stats['max_playtime']:.0f}ч, Среднее: {stats['avg_playtime']:.0f}ч'
+        bot.send_photo(message.chat.id, plot_buffer, caption=caption)
+    except Exception as e:
+        logger.error(f"Ошибка отправления графика {e}")
+        bot.send_message(message.chat.id, f"Ошибка при создании графика: {e}")
+
+
+@bot.message_handler(commands=['genres'])
+def send_genre_stats(message):
+    try:
+        bot.send_message(message.chat.id, "Анализирую жанры...")
+        plot_buffer = create_genre_analysis(df)
+        logger.info(f"Пользователь {message.from_user.username} запросил жанры")
+        caption = f"Всего жанров: {stats['total_genres']}"
+        bot.send_photo(message.chat.id, plot_buffer, caption=caption)
+
+    except Exception as e:
+        logger.error(f"Ошибка отправления графика {e}")
+        bot.send_message(message.chat.id, f"❌ Ошибка: {str(e)}")
+
+@bot.message_handler(commands = ['correlation'])
+def send_correlation_stats(message):
+    try:
+        correlation, strength, direction, group_stats = test_playtime_achievements_correlation(df)
+        if strength == 'очень слабая' or strength == 'слабая':
+            results = ('Скорее всего достижения не зависят от времени\n'
+                       'Другие факторы влияют сильнее')
+        else:
+            results = 'Скорее всего достижения зависят от времени'
+
+        logger.info(f"Пользователь {message.from_user.username} запросил корреляцию")
+        bot.send_message(message.chat.id, f"Корреляция время-достижения: {correlation}\n"
+                                          f"{strength} связь\n"
+                                          f"{results}")
+    except Exception as e:
+        logger.error(f"Ошибка при построении корреляции {e}")
+        bot.send_message(message.chat.id, f"Ошибка при построении корреляции: {e}")
+
+@bot.message_handler(commands = ['asymmetryc'])
+def send_asymmetryc_stats(message):
+    try:
+        assym = test_playtime_is_assymetryc(df)
+        logger.info(f"Пользователь {message.from_user.username} запросил ассиметрию")
+        if abs(assym) < 0.5:
+            results = 'распределение близко к симметричному'
+        elif 0.5 <= abs(assym) < 1:
+            results = 'распределение умеренно ассиметричное'
+        else:
+            results = 'распределение ассиметричное'
+
+        if assym > 0:
+            direction = "правосторонняя (положительная)"
+        elif assym < 0:
+            direction = "левосторонняя (отрицательная)"
+        else:
+            direction = "симметричное"
+
+        bot.send_message(message.chat.id, f"Ассиметрия времени игры: {assym}\n"
+                                          f"Что значит, что {results}\n"
+                                          f"Со стороной {direction}\n")
+    except Exception as e:
+        logger.error(f"Ошибка при ассиметрии {e}")
+        bot.send_message(message.chat.id, f"Ошибка при запросе ассиметрии: {e}")
 
 # Сохраняем пользователей при завершении работы
 import atexit
